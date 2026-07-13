@@ -33,6 +33,7 @@ All test logs go under **`lucy_testing_output/`** (gitignored).
 | **[19]** | Seed round trip (seeds-only + infinite manifests × 21 dtypes) | terminal only | `LOOM_SEED_ROUNDTRIP=1` |
 | **[20]** | Seed proof (train seeds, save, reload) | `lucy_testing_output/proof.seeds` | `LOOM_SEED_PROOF=1` |
 | **[21]** | Seed showcase (train layer_seed, seeds-only reload) | `lucy_testing_output/showcase.seeds.json` | `LOOM_SEED_SHOWCASE=1` |
+| **[22]** | Seed training on real UCI wine data (layer_seed hill-climb) | `lucy_testing_output/seed_training.seeds.json` | `LOOM_SEED_TRAINING=1` |
 
 **Go unit tests** (no menu):
 

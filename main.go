@@ -62,6 +62,11 @@ func main() {
 		examples.RunSeedShowcaseAuto()
 		return
 	}
+	if os.Getenv("LOOM_SEED_TRAINING") == "1" {
+		_ = os.Unsetenv("LOOM_SEED_TRAINING")
+		examples.RunSeedTrainingAuto()
+		return
+	}
 	mode := readInput(reader, "\n[1] Poly Talk (HuggingFace cache)\n"+
 		"[2] Tests — dense mid-stream adaptation benchmark\n"+
 		"[3] Layer testing — CPU/GPU suites (optional save to "+lucytesting.DefaultOutputDir+")\n"+
@@ -83,6 +88,7 @@ func main() {
 		"[19] Seed round trip — seeds-only + infinite manifests · all layers × 21 dtypes\n"+
 		"[20] Seed proof — train layer_seed · save trained seeds · reload trained net (→ "+lucytesting.DefaultOutputDir+"/proof.seeds)\n"+
 		"[21] Seed showcase — train layer_seed · seeds-only reload all layers (→ "+lucytesting.DefaultOutputDir+"/showcase.seeds.json)\n"+
+		"[22] Seed training — real UCI wine data · layer_seed hill-climb (→ "+lucytesting.DefaultOutputDir+"/seed_training.seeds.json)\n"+
 		"Choice [1]: ", "1")
 	switch strings.TrimSpace(mode) {
 	case "2":
@@ -126,6 +132,8 @@ func main() {
 		examples.RunSeedProofMenu(reader)
 	case "21":
 		examples.RunSeedShowcaseMenu(reader)
+	case "22":
+		examples.RunSeedTrainingMenu(reader)
 	default:
 		runHuggingFaceMode(reader)
 	}
