@@ -28,6 +28,7 @@ func RunAll() bool {
 	ok = runCNN3() && ok
 	ok = runEmbedding() && ok
 	ok = runResidual() && ok
+	ok = runAllDTypes() && ok
 	ok = runPendingLayers() && ok
 	return ok
 }
@@ -709,13 +710,50 @@ func runResidual() bool {
 	return ok
 }
 
+func runAllDTypes() bool {
+	fmt.Println("\n══ 21 dtypes — all numerical layer families ══")
+	matrix := poly.RunAllNumericalLayerDTypeMatrix(tag)
+	pass, fail, familyFails := poly.MatrixDTypeRoundTripSummary(matrix)
+	for _, block := range matrix {
+		p, f, _ := poly.DTypeRoundTripSummary(block.Results)
+		mark := "OK"
+		if f > 0 {
+			mark = "FAIL"
+		}
+		fmt.Printf("  [%s] %-10s %d/21 dtypes pass\n", mark, block.Family, p)
+		if f > 0 {
+			for _, r := range block.Results {
+				if !r.OK {
+					fmt.Printf("      FAIL %-10s — %s\n", r.DTypeName, r.Err)
+				}
+			}
+		}
+	}
+	total := len(matrix) * 21
+	fmt.Printf("  total %d/%d dtype×layer checks pass\n", pass, total)
+	if fail > 0 {
+		for _, line := range familyFails {
+			fmt.Printf("  %s\n", line)
+		}
+	}
+	ok := fail == 0
+	if ok {
+		fmt.Println("  21 dtypes × all layers OK")
+	} else {
+		fmt.Println("  21 dtypes matrix FAIL")
+	}
+	return ok
+}
+
 func runPendingLayers() bool {
-	fmt.Println("\n══ Other layers / dtypes (coming next) ══")
-	pending := []string{"21 dtypes"}
+	fmt.Println("\n══ Seed round trip complete ══")
+	pending := []string{}
 	for _, name := range pending {
 		fmt.Printf("  [ ] %s round trip\n", name)
 	}
-	fmt.Println("  (dense is the template — plug each layer into seedroundtrip)")
+	if len(pending) == 0 {
+		fmt.Println("  All layer families + 21 dtypes covered.")
+	}
 	return true
 }
 
