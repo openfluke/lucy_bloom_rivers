@@ -82,7 +82,7 @@ func main() {
 		"[18] Seed topology POC — recipe seeds from shape only (dense + transformer)\n"+
 		"[19] Seed round trip — seeds-only + infinite manifests · all layers × 21 dtypes\n"+
 		"[20] Seed proof — train layer_seed · save trained seeds · reload trained net (→ "+lucytesting.DefaultOutputDir+"/proof.seeds)\n"+
-		"[21] Seed showcase — Train backprop · infinite manifest · reload all layers (→ "+lucytesting.DefaultOutputDir+"/showcase.seeds.json)\n"+
+		"[21] Seed showcase — train layer_seed · seeds-only reload all layers (→ "+lucytesting.DefaultOutputDir+"/showcase.seeds.json)\n"+
 		"Choice [1]: ", "1")
 	switch strings.TrimSpace(mode) {
 	case "2":

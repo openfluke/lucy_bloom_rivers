@@ -11,7 +11,7 @@ import (
 
 // RunSeedShowcaseMenu runs train→infinite manifest→reload for all layer types (menu [21]).
 func RunSeedShowcaseMenu(reader *bufio.Reader) {
-	fmt.Println("\n[21] Seed showcase — Train · weights→infinite manifest · reload all layers")
+	fmt.Println("\n[21] Seed showcase — train layer_seed · seeds-only reload all layers")
 	_ = reader
 	if err := os.MkdirAll(lucytesting.DefaultOutputDir, 0o755); err != nil {
 		fmt.Printf("  FAIL mkdir %s: %v\n", lucytesting.DefaultOutputDir, err)

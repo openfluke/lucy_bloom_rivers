@@ -1,5 +1,5 @@
-// Package seedshowcase trains loom layers with backprop, encodes weights into infinite
-// layer seed manifests, and reloads from seeds to match outputs.
+// Package showcase trains layer_seed values for every loom layer family (seed mutation,
+// not backprop). Weights are always He-init from seed — no weight bytes in the file.
 package seedshowcase
 
 import (
@@ -8,17 +8,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/openfluke/loom/poly"
 )
 
 const (
 	showcaseName   = "seed-showcase-all-layers"
-	showcaseFormat = "chaosglue-seed-showcase-v4"
+	showcaseFormat = "chaosglue-seed-showcase-v5"
 	seedFile       = "showcase.seeds.json"
 )
 
-// ShowcaseSection is one layer-family demo (train → infinite manifest → reload).
+// ShowcaseSection is one layer-family demo (train layer_seed → save → reload).
 type ShowcaseSection struct {
 	Kind           string          `json:"kind"`
 	Name           string          `json:"name"`
@@ -28,23 +26,15 @@ type ShowcaseSection struct {
 	TrainedOutputs []float32       `json:"trained_outputs,omitempty"`
 }
 
-// SeedShowcaseFile stores trained infinite manifests for every supported layer type.
+// SeedShowcaseFile stores trained seeds-only manifests for every supported layer type.
 type SeedShowcaseFile struct {
 	Format   string            `json:"format"`
 	Name     string            `json:"name"`
 	Training string            `json:"training"`
 	Sections []ShowcaseSection `json:"sections"`
-
-	// v2 dense-only fields (reload compat)
-	TopologySeed   uint64                            `json:"topology_seed,omitempty"`
-	Sizes          []int                             `json:"sizes,omitempty"`
-	FinalLoss      float64                           `json:"final_loss,omitempty"`
-	Layers         []poly.InfiniteDenseLayerManifest `json:"layers,omitempty"`
-	InitOutputs    [][]float32                       `json:"init_outputs,omitempty"`
-	TrainedOutputs [][]float32                       `json:"trained_outputs_legacy,omitempty"`
 }
 
-// RunAll trains on first run and saves seeds; reruns reload from showcase.seeds.json only.
+// RunAll trains layer seeds on first run; reruns reload from showcase.seeds.json only.
 func RunAll(dir string) bool {
 	if dir == "" {
 		dir = "."
@@ -52,7 +42,7 @@ func RunAll(dir string) bool {
 	path := filepath.Join(dir, seedFile)
 
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
-	fmt.Println("║  seed_showcase — all layers · Train · weights→seed · reload  ║")
+	fmt.Println("║  seed_showcase — all layers · train layer_seed · reload      ║")
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 
 	if _, err := os.Stat(path); err == nil {
@@ -65,7 +55,7 @@ func RunAll(dir string) bool {
 }
 
 func runReload(path string) bool {
-	fmt.Printf("\n── RELOAD: %s → seeds+overrides → weights → forward ──\n", seedFile)
+	fmt.Printf("\n── RELOAD: %s → layer_seed → He-init weights → forward ──\n", seedFile)
 	fmt.Println("   delete file to train again")
 
 	file, err := loadShowcase(path)
@@ -74,10 +64,6 @@ func runReload(path string) bool {
 		return false
 	}
 	printShowcaseSummary(file, path)
-
-	if file.Format == "chaosglue-seed-showcase-v2" {
-		return reloadV2Dense(file)
-	}
 
 	ok := true
 	for i, sec := range file.Sections {
@@ -88,39 +74,23 @@ func runReload(path string) bool {
 			ok = false
 			continue
 		}
-		fmt.Printf("    forward %s overrides=%d weight_fp=%v\n",
-			fmtFloats(got), sectionOverrideSummary(sec), sec.WeightFPs)
-		if err := verifySectionWeightReload(sec); err != nil {
+		fmt.Printf("    forward %s layer_seeds=%d weight_fp=%v\n",
+			fmtFloats(got), sectionLayerSeedCount(sec), sec.WeightFPs)
+		if err := verifySectionSeedReload(sec); err != nil {
 			fmt.Printf("  ✗ %v\n", err)
 			ok = false
 			continue
 		}
-		fmt.Println("  ✓ weights restored from seed manifests")
+		fmt.Println("  ✓ weights from layer_seed only (no override blobs)")
 	}
 	if ok {
-		fmt.Println("\n✓ All layer sections restored trained weights from seed manifests")
+		fmt.Println("\n✓ All sections restored from seeds-only manifests")
 	}
 	return ok
 }
 
-func reloadV2Dense(file SeedShowcaseFile) bool {
-	net, err := buildNetFromShowcaseV2(file)
-	if err != nil {
-		fmt.Printf("  FAIL seed→weights: %v\n", err)
-		return false
-	}
-	inputs := demoInputs(10, file.Sizes[0])
-	outs := forwardAll(net, inputs)
-	if len(file.TrainedOutputs) > 0 && !outputsEqual(outs, file.TrainedOutputs) {
-		fmt.Println("\n✗ FAIL: v2 dense outputs differ")
-		return false
-	}
-	fmt.Println("\n✓ v2 dense MLP reload OK")
-	return true
-}
-
 func runTrainAndSave(path string) bool {
-	fmt.Printf("\n── TRAIN: loom poly.Train per layer family (CPU backprop) ──\n")
+	fmt.Printf("\n── TRAIN: mutate layer_seed per layer family (weights always He-init) ──\n")
 
 	sections, err := buildAllSections()
 	if err != nil {
@@ -131,23 +101,17 @@ func runTrainAndSave(path string) bool {
 	file := SeedShowcaseFile{
 		Format:   showcaseFormat,
 		Name:     showcaseName,
-		Training: "loom-poly-Train-backprop",
+		Training: "layer-seed-mutation",
 		Sections: sections,
 	}
 
 	for i, sec := range sections {
-		fmt.Printf("\n── [%d] %s trained overrides=%d output=%s weight_fp=%v ──\n",
-			i+1, sec.Kind, sectionOverrideSummary(sec), fmtFloats(sec.TrainedOutputs), sec.WeightFPs)
-		if err := verifySectionWeightReload(sec); err != nil {
+		fmt.Printf("\n── [%d] %s layer_seeds=%d output=%s weight_fp=%v ──\n",
+			i+1, sec.Kind, sectionLayerSeedCount(sec), fmtFloats(sec.TrainedOutputs), sec.WeightFPs)
+		if err := verifySectionSeedReload(sec); err != nil {
 			fmt.Printf("  FAIL: %v\n", err)
 			return false
 		}
-		got, err := rebuildSection(sec)
-		if err != nil {
-			fmt.Printf("  FAIL inline forward: %v\n", err)
-			return false
-		}
-		_ = got
 	}
 
 	if err := saveShowcase(path, file); err != nil {
@@ -155,27 +119,9 @@ func runTrainAndSave(path string) bool {
 		return false
 	}
 	info, _ := os.Stat(path)
-	fmt.Printf("\n── Saved %d sections → %s (%d bytes) ──\n", len(sections), path, info.Size())
+	fmt.Printf("\n── Saved %d sections → %s (%d bytes, seeds only) ──\n", len(sections), path, info.Size())
 	fmt.Printf("\n✓ First run done. Run again to reload from %s only.\n", seedFile)
 	return true
-}
-
-func buildNetFromShowcaseV2(f SeedShowcaseFile) (*poly.VolumetricNetwork, error) {
-	if len(f.Layers) == 0 {
-		return nil, fmt.Errorf("showcase: no layers")
-	}
-	net := poly.NewVolumetricNetwork(1, 1, 1, len(f.Layers))
-	net.InitSeed = f.TopologySeed
-	for i := range f.Layers {
-		lm := f.Layers[i]
-		bl, err := poly.BuildDenseLayerFromInfiniteManifest(&lm)
-		if err != nil {
-			return nil, fmt.Errorf("layer %d: %w", i, err)
-		}
-		l := net.GetLayer(0, 0, 0, i)
-		*l = *bl
-	}
-	return net, nil
 }
 
 func saveShowcase(path string, f SeedShowcaseFile) error {
@@ -191,7 +137,7 @@ func loadShowcase(path string) (SeedShowcaseFile, error) {
 	if err != nil {
 		return SeedShowcaseFile{}, err
 	}
-	if len(data) > 32*1024*1024 {
+	if len(data) > 8*1024*1024 {
 		return SeedShowcaseFile{}, fmt.Errorf("refusing bloated seed file (%d bytes)", len(data))
 	}
 	var f SeedShowcaseFile
@@ -199,7 +145,9 @@ func loadShowcase(path string) (SeedShowcaseFile, error) {
 		return SeedShowcaseFile{}, err
 	}
 	switch f.Format {
-	case showcaseFormat, "chaosglue-seed-showcase-v2", "chaosglue-seed-showcase-v1":
+	case showcaseFormat:
+	case "chaosglue-seed-showcase-v4", "chaosglue-seed-showcase-v2", "chaosglue-seed-showcase-v1":
+		return SeedShowcaseFile{}, fmt.Errorf("format %q stores compressed weight overrides — delete %s and retrain for v5 seeds-only", f.Format, seedFile)
 	default:
 		return SeedShowcaseFile{}, fmt.Errorf("unknown format %q — delete %s and retrain", f.Format, seedFile)
 	}
@@ -214,13 +162,9 @@ func printShowcaseSummary(f SeedShowcaseFile, path string) {
 	}
 	fmt.Printf("\n  file: %s (%d bytes)\n", path, size)
 	fmt.Printf("  training=%q format=%s\n", f.Training, f.Format)
-	if f.Format == "chaosglue-seed-showcase-v2" {
-		fmt.Printf("  v2 dense MLP topology_seed=0x%x sizes=%v\n", f.TopologySeed, f.Sizes)
-		return
-	}
 	for i, sec := range f.Sections {
-		fmt.Printf("    [%d] %s topology_seed=0x%x overrides=%d\n",
-			i+1, sec.Kind, sec.TopologySeed, sectionOverrideSummary(sec))
+		fmt.Printf("    [%d] %s topology_seed=0x%x layer_seeds=%d\n",
+			i+1, sec.Kind, sec.TopologySeed, sectionLayerSeedCount(sec))
 	}
 }
 

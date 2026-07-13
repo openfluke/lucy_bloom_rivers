@@ -32,7 +32,7 @@ All test logs go under **`lucy_testing_output/`** (gitignored).
 | **[18]** | Seed topology POC | terminal only | `LOOM_SEED_POC=1` |
 | **[19]** | Seed round trip (seeds-only + infinite manifests × 21 dtypes) | terminal only | `LOOM_SEED_ROUNDTRIP=1` |
 | **[20]** | Seed proof (train seeds, save, reload) | `lucy_testing_output/proof.seeds` | `LOOM_SEED_PROOF=1` |
-| **[21]** | Seed showcase (train backprop → infinite manifest → reload) | `lucy_testing_output/showcase.seeds.json` | `LOOM_SEED_SHOWCASE=1` |
+| **[21]** | Seed showcase (train layer_seed, seeds-only reload) | `lucy_testing_output/showcase.seeds.json` | `LOOM_SEED_SHOWCASE=1` |
 
 **Go unit tests** (no menu):
 
