@@ -80,6 +80,8 @@ func runReloadOnly(path string) bool {
 	printForwardBlock(net, inputs)
 
 	outs := forwardAll(net, inputs)
+	fmt.Println("\n  10 final outputs (recomputed from seeds→weights, not read from file):")
+	printOutputs(outs, "    ")
 	if len(proof.TrainedOutputs) > 0 {
 		if !outputsEqual(outs, proof.TrainedOutputs) {
 			fmt.Println("\n✗ FAIL: outputs differ from trained baseline in file")
