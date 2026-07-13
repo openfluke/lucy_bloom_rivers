@@ -29,6 +29,9 @@ All test logs go under **`lucy_testing_output/`** (gitignored).
 | **[9]** | Intel NPU bridge | `lucy_testing_output/nine_layer.txt` | `LOOM_NINE_LAYER=1` + pipe |
 | **[2]** | Dense adaptation benchmark | terminal only | pipe stdin |
 | **[5]** | BitNet forward benchmark | terminal only | pipe stdin |
+| **[18]** | Seed topology POC | terminal only | `LOOM_SEED_POC=1` |
+| **[19]** | Seed round trip (layers × 21 dtypes) | terminal only | `LOOM_SEED_ROUNDTRIP=1` |
+| **[20]** | Seed proof (train seeds, save, reload) | `lucy_testing_output/proof.seeds` | `LOOM_SEED_PROOF=1` |
 
 **Go unit tests** (no menu):
 
