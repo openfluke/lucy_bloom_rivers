@@ -26,6 +26,8 @@ func RunAll() bool {
 	ok = runCNN1() && ok
 	ok = runCNN2() && ok
 	ok = runCNN3() && ok
+	ok = runEmbedding() && ok
+	ok = runResidual() && ok
 	ok = runPendingLayers() && ok
 	return ok
 }
@@ -545,14 +547,198 @@ func runCNNStack(label string, specs []poly.CNNSpec, dtypes []string) bool {
 	return ok
 }
 
+func runEmbedding() bool {
+	fmt.Println("\n══ Embedding — multi-table · multi-dtype ══")
+	specs := []poly.EmbeddingSpec{
+		{VocabSize: 32, EmbeddingDim: 8, SeqLen: 8},
+		{VocabSize: 32, EmbeddingDim: 8, SeqLen: 8},
+		{VocabSize: 32, EmbeddingDim: 8, SeqLen: 8},
+	}
+	dtypes := []string{"float32", "int8", "int32"}
+	topo := poly.EmbeddingTopologySeed(tag, specs)
+
+	manifest, err := poly.BuildEmbeddingManifest(topo, specs, dtypes)
+	if err != nil {
+		fmt.Printf("  FAIL build manifest: %v\n", err)
+		return false
+	}
+	fmt.Printf("  topology_seed=0x%x specs=%v\n", topo, specs)
+	for _, layer := range manifest.Layers {
+		fmt.Printf("    table %d vocab=%d dim=%d seq=%d %s seed=0x%x weight_fp=0x%x\n",
+			layer.Index, layer.VocabSize, layer.EmbeddingDim, layer.SeqLen,
+			layer.DType, layer.LayerSeed, layer.WeightFP)
+	}
+	fmt.Printf("  network_fp=0x%x forward_fp=0x%x\n", manifest.NetworkFP, manifest.ForwardFP)
+
+	rebuilt, err := poly.RebuildEmbeddingManifest(manifest)
+	if err != nil {
+		fmt.Printf("  FAIL seeds→weights rebuild: %v\n", err)
+		return false
+	}
+	seedWeightsOK := rebuilt.NetworkFP == manifest.NetworkFP && rebuilt.ForwardFP == manifest.ForwardFP
+	fmt.Printf("  seeds→weights→same output: %v\n", seedWeightsOK)
+
+	netA, err := poly.BuildEmbeddingVolumetricFromManifest(manifest)
+	if err != nil {
+		fmt.Printf("  FAIL volumetric build A: %v\n", err)
+		return false
+	}
+	netB, err := poly.BuildEmbeddingVolumetricFromManifest(rebuilt)
+	if err != nil {
+		fmt.Printf("  FAIL volumetric build B: %v\n", err)
+		return false
+	}
+	_ = netB
+	hashA := embeddingForwardHash(manifest)
+	hashB := embeddingForwardHash(rebuilt)
+	forwardOK := hashA == hashB
+	fmt.Printf("  forward hash A=0x%x B=0x%x same=%v\n", hashA, hashB, forwardOK)
+
+	extracted, err := poly.ManifestFromEmbeddingNetwork(netA, topo, specs, dtypes)
+	if err != nil {
+		fmt.Printf("  FAIL weights→seeds: %v\n", err)
+		return false
+	}
+	weightsToSeedOK := extracted.NetworkFP == manifest.NetworkFP
+	fmt.Printf("  weights→seeds extract: network_fp match=%v forward_fp=0x%x\n", weightsToSeedOK, extracted.ForwardFP)
+	for i := range manifest.Layers {
+		match := extracted.Layers[i].LayerSeed == manifest.Layers[i].LayerSeed
+		fmt.Printf("    table %d recovered_seed=0x%x match=%v\n", i, extracted.Layers[i].LayerSeed, match)
+		if !match {
+			weightsToSeedOK = false
+		}
+	}
+
+	jsonBytes, err := poly.MarshalEmbeddingManifest(manifest)
+	if err != nil {
+		fmt.Printf("  FAIL marshal: %v\n", err)
+		return false
+	}
+	parsed, err := poly.ParseEmbeddingManifest(jsonBytes)
+	if err != nil {
+		fmt.Printf("  FAIL parse: %v\n", err)
+		return false
+	}
+	_, err = poly.RebuildEmbeddingManifest(parsed)
+	jsonOK := err == nil
+	fmt.Printf("  JSON manifest (%d bytes) seeds-only round trip: %v\n", len(jsonBytes), jsonOK)
+
+	ok := seedWeightsOK && forwardOK && weightsToSeedOK && jsonOK && extracted.ForwardFP == hashA
+	if ok {
+		fmt.Println("  Embedding round trip OK")
+	} else {
+		fmt.Println("  Embedding round trip FAIL")
+	}
+	return ok
+}
+
+func runResidual() bool {
+	fmt.Println("\n══ Residual — dense+skip · multi-dtype ══")
+	spec := poly.ResidualSpec{In: 8, Out: 8}
+	dtypes := []string{"float32", "int8", "int32"}
+	ok := true
+	for _, dt := range dtypes {
+		topo := poly.ResidualTopologySeed(tag+":"+dt, spec)
+		manifest, err := poly.BuildResidualManifest(topo, spec, dt)
+		if err != nil {
+			fmt.Printf("  FAIL build %s: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		fmt.Printf("  [%s] topology_seed=0x%x dense_seed=0x%x weight_fp=0x%x forward_fp=0x%x\n",
+			dt, topo, manifest.DenseSeed, manifest.DenseWeightFP, manifest.ForwardFP)
+
+		rebuilt, err := poly.RebuildResidualManifest(manifest)
+		if err != nil {
+			fmt.Printf("  FAIL %s rebuild: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		netA, err := poly.BuildResidualVolumetricFromManifest(manifest)
+		if err != nil {
+			fmt.Printf("  FAIL %s build: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		outA, err := poly.ForwardResidualManifest(manifest)
+		if err != nil {
+			fmt.Printf("  FAIL %s forward A: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		outB, err := poly.ForwardResidualManifest(rebuilt)
+		if err != nil {
+			fmt.Printf("  FAIL %s forward B: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		hashA := forwardOutputHash(outA)
+		hashB := forwardOutputHash(outB)
+		extracted, err := poly.ManifestFromResidualNetwork(netA, topo, spec, dt)
+		if err != nil {
+			fmt.Printf("  FAIL %s weights→seeds: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		jsonBytes, err := poly.MarshalResidualManifest(manifest)
+		if err != nil {
+			fmt.Printf("  FAIL %s marshal: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		parsed, err := poly.ParseResidualManifest(jsonBytes)
+		if err != nil {
+			fmt.Printf("  FAIL %s parse: %v\n", dt, err)
+			ok = false
+			continue
+		}
+		_, err = poly.RebuildResidualManifest(parsed)
+		blockOK := hashA == hashB && extracted.DenseSeed == manifest.DenseSeed &&
+			extracted.ForwardFP == hashA && err == nil
+		fmt.Printf("  [%s] forward same=%v seed match=%v json=%v\n",
+			dt, hashA == hashB, extracted.DenseSeed == manifest.DenseSeed, err == nil)
+		if !blockOK {
+			ok = false
+		}
+	}
+	if ok {
+		fmt.Println("  Residual round trip OK")
+	} else {
+		fmt.Println("  Residual round trip FAIL")
+	}
+	return ok
+}
+
 func runPendingLayers() bool {
 	fmt.Println("\n══ Other layers / dtypes (coming next) ══")
-	pending := []string{"Embedding", "21 dtypes"}
+	pending := []string{"21 dtypes"}
 	for _, name := range pending {
 		fmt.Printf("  [ ] %s round trip\n", name)
 	}
 	fmt.Println("  (dense is the template — plug each layer into seedroundtrip)")
 	return true
+}
+
+func embeddingForwardHash(m *poly.EmbeddingWeightManifest) uint64 {
+	out, err := poly.ForwardEmbeddingManifest(m)
+	if err != nil || out == nil {
+		return 0
+	}
+	return forwardOutputHash(out)
+}
+
+func forwardOutputHash(out []float32) uint64 {
+	h := fnv.New64a()
+	var buf [4]byte
+	for _, v := range out {
+		bits := math.Float32bits(v)
+		buf[0] = byte(bits)
+		buf[1] = byte(bits >> 8)
+		buf[2] = byte(bits >> 16)
+		buf[3] = byte(bits >> 24)
+		_, _ = h.Write(buf[:])
+	}
+	return h.Sum64()
 }
 
 func cnnForwardHash(net *poly.VolumetricNetwork, in *poly.Tensor[float32]) uint64 {
