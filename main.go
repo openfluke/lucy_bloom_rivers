@@ -57,6 +57,11 @@ func main() {
 		examples.RunSeedProofAuto()
 		return
 	}
+	if os.Getenv("LOOM_SEED_SHOWCASE") == "1" {
+		_ = os.Unsetenv("LOOM_SEED_SHOWCASE")
+		examples.RunSeedShowcaseAuto()
+		return
+	}
 	mode := readInput(reader, "\n[1] Poly Talk (HuggingFace cache)\n"+
 		"[2] Tests — dense mid-stream adaptation benchmark\n"+
 		"[3] Layer testing — CPU/GPU suites (optional save to "+lucytesting.DefaultOutputDir+")\n"+
@@ -75,8 +80,9 @@ func main() {
 		"[16] Tween native suite — native SC vs native-SIMD target propagation (→ "+lucytesting.DefaultOutputDir+"/tween_native_layers.txt)\n"+
 		"[17] Adaptation suite — mid-stream task flip · all layers/dtypes/QAT/Nat/SIMD (→ "+lucytesting.DefaultOutputDir+"/adaptation_suite.txt)\n"+
 		"[18] Seed topology POC — recipe seeds from shape only (dense + transformer)\n"+
-		"[19] Seed round trip — dense weights↔seeds first · all layers/dtypes next\n"+
+		"[19] Seed round trip — seeds-only + infinite manifests · all layers × 21 dtypes\n"+
 		"[20] Seed proof — train layer_seed · save trained seeds · reload trained net (→ "+lucytesting.DefaultOutputDir+"/proof.seeds)\n"+
+		"[21] Seed showcase — Train backprop · infinite manifest · reload all layers (→ "+lucytesting.DefaultOutputDir+"/showcase.seeds.json)\n"+
 		"Choice [1]: ", "1")
 	switch strings.TrimSpace(mode) {
 	case "2":
@@ -118,6 +124,8 @@ func main() {
 		examples.RunSeedRoundTripMenu(reader)
 	case "20":
 		examples.RunSeedProofMenu(reader)
+	case "21":
+		examples.RunSeedShowcaseMenu(reader)
 	default:
 		runHuggingFaceMode(reader)
 	}

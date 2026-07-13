@@ -10,7 +10,7 @@ import (
 
 // RunSeedRoundTripMenu runs seed round-trip tests (menu [19]).
 func RunSeedRoundTripMenu(reader *bufio.Reader) {
-	fmt.Println("\n[19] Seed round trip — dense first · weights↔seeds · all layers later")
+	fmt.Println("\n[19] Seed round trip — seeds-only + infinite manifests · all layers × 21 dtypes")
 	_ = reader
 	if !seedroundtrip.RunAll() {
 		os.Exit(1)

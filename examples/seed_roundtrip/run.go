@@ -14,7 +14,7 @@ const tag = "lucy-roundtrip"
 // RunAll runs round-trip tests; dense first, then other layer types as they land.
 func RunAll() bool {
 	fmt.Println("\n╔══════════════════════════════════════════════════════════════╗")
-	fmt.Println("║  Seed round trip — same seeds → same weights & outputs       ║")
+	fmt.Println("║  Seed round trip — seeds-only + infinite manifests × dtypes  ║")
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 
 	ok := true
@@ -29,8 +29,41 @@ func RunAll() bool {
 	ok = runEmbedding() && ok
 	ok = runResidual() && ok
 	ok = runAllDTypes() && ok
+	ok = runInfiniteLayerManifests() && ok
 	ok = runPendingLayers() && ok
 	return ok
+}
+
+func runInfiniteLayerManifests() bool {
+	fmt.Println("\n══ Infinite layer manifests — sparse overrides · 21 dtypes × all kinds ══")
+	matrix := poly.RunAllInfiniteLayerDTypeMatrix(tag)
+	pass, fail, familyFails := poly.MatrixDTypeRoundTripSummary(matrix)
+	for _, block := range matrix {
+		p, f, _ := poly.DTypeRoundTripSummary(block.Results)
+		mark := "OK"
+		if f > 0 {
+			mark = "FAIL"
+		}
+		fmt.Printf("  [%s] %-10s %d/21 dtypes pass\n", mark, block.Family, p)
+		if f > 0 {
+			for _, r := range block.Results {
+				if !r.OK {
+					fmt.Printf("      FAIL %-10s — %s\n", r.DTypeName, r.Err)
+				}
+			}
+		}
+	}
+	total := len(matrix) * 21
+	fmt.Printf("  total %d/%d infinite-manifest checks pass\n", pass, total)
+	if fail > 0 {
+		for _, line := range familyFails {
+			fmt.Printf("  %s\n", line)
+		}
+		fmt.Println("  Infinite layer manifest matrix FAIL")
+		return false
+	}
+	fmt.Println("  Infinite layer manifests × 21 dtypes OK")
+	return true
 }
 
 func runDense() bool {
