@@ -52,6 +52,11 @@ func main() {
 		examples.RunSeedRoundTripAuto()
 		return
 	}
+	if os.Getenv("LOOM_SEED_PROOF") == "1" {
+		_ = os.Unsetenv("LOOM_SEED_PROOF")
+		examples.RunSeedProofAuto()
+		return
+	}
 	mode := readInput(reader, "\n[1] Poly Talk (HuggingFace cache)\n"+
 		"[2] Tests — dense mid-stream adaptation benchmark\n"+
 		"[3] Layer testing — CPU/GPU suites (optional save to "+lucytesting.DefaultOutputDir+")\n"+
@@ -71,6 +76,7 @@ func main() {
 		"[17] Adaptation suite — mid-stream task flip · all layers/dtypes/QAT/Nat/SIMD (→ "+lucytesting.DefaultOutputDir+"/adaptation_suite.txt)\n"+
 		"[18] Seed topology POC — recipe seeds from shape only (dense + transformer)\n"+
 		"[19] Seed round trip — dense weights↔seeds first · all layers/dtypes next\n"+
+		"[20] Seed proof — train layer_seed · save trained seeds · reload trained net (→ "+lucytesting.DefaultOutputDir+"/proof.seeds)\n"+
 		"Choice [1]: ", "1")
 	switch strings.TrimSpace(mode) {
 	case "2":
@@ -110,6 +116,8 @@ func main() {
 		examples.RunSeedPOCMenu(reader)
 	case "19":
 		examples.RunSeedRoundTripMenu(reader)
+	case "20":
+		examples.RunSeedProofMenu(reader)
 	default:
 		runHuggingFaceMode(reader)
 	}
