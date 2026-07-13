@@ -20,6 +20,7 @@ func RunAll() bool {
 	ok := true
 	ok = runDense() && ok
 	ok = runSwiGLU() && ok
+	ok = runMHA() && ok
 	ok = runPendingLayers() && ok
 	return ok
 }
@@ -191,9 +192,93 @@ func runSwiGLU() bool {
 	return ok
 }
 
+func runMHA() bool {
+	fmt.Println("\n══ MHA — multi-block · multi-dtype ══")
+	specs := []poly.MHASpec{
+		{DModel: 8, NumHeads: 2, NumKVHeads: 2, HeadDim: 4, QueryDim: 8},
+		{DModel: 8, NumHeads: 2, NumKVHeads: 2, HeadDim: 4, QueryDim: 8},
+		{DModel: 8, NumHeads: 4, NumKVHeads: 2, HeadDim: 2, QueryDim: 8},
+	}
+	dtypes := []string{"float32", "int8", "int32"}
+	topo := poly.MHATopologySeed(tag, specs)
+
+	manifest, err := poly.BuildMHAManifest(topo, specs, dtypes)
+	if err != nil {
+		fmt.Printf("  FAIL build manifest: %v\n", err)
+		return false
+	}
+	fmt.Printf("  topology_seed=0x%x specs=%v\n", topo, specs)
+	for _, layer := range manifest.Layers {
+		fmt.Printf("    layer %d d=%d heads=%d kv=%d %s seed=0x%x weight_fp=0x%x\n",
+			layer.Index, layer.DModel, layer.NumHeads, layer.NumKVHeads, layer.DType, layer.LayerSeed, layer.WeightFP)
+	}
+	fmt.Printf("  network_fp=0x%x forward_fp=0x%x\n", manifest.NetworkFP, manifest.ForwardFP)
+
+	rebuilt, err := poly.RebuildMHAManifest(manifest)
+	if err != nil {
+		fmt.Printf("  FAIL seeds→weights rebuild: %v\n", err)
+		return false
+	}
+	seedWeightsOK := rebuilt.NetworkFP == manifest.NetworkFP && rebuilt.ForwardFP == manifest.ForwardFP
+	fmt.Printf("  seeds→weights→same output: %v\n", seedWeightsOK)
+
+	netA, err := poly.BuildMHAVolumetricFromManifest(manifest)
+	if err != nil {
+		fmt.Printf("  FAIL volumetric build A: %v\n", err)
+		return false
+	}
+	netB, err := poly.BuildMHAVolumetricFromManifest(rebuilt)
+	if err != nil {
+		fmt.Printf("  FAIL volumetric build B: %v\n", err)
+		return false
+	}
+	inputDim := specs[0].DModel
+	hashA := forwardHash(netA, inputDim)
+	hashB := forwardHash(netB, inputDim)
+	forwardOK := hashA == hashB
+	fmt.Printf("  forward hash A=0x%x B=0x%x same=%v\n", hashA, hashB, forwardOK)
+
+	extracted, err := poly.ManifestFromMHANetwork(netA, topo, specs, dtypes)
+	if err != nil {
+		fmt.Printf("  FAIL weights→seeds: %v\n", err)
+		return false
+	}
+	weightsToSeedOK := extracted.NetworkFP == manifest.NetworkFP
+	fmt.Printf("  weights→seeds extract: network_fp match=%v forward_fp=0x%x\n", weightsToSeedOK, extracted.ForwardFP)
+	for i := range manifest.Layers {
+		match := extracted.Layers[i].LayerSeed == manifest.Layers[i].LayerSeed
+		fmt.Printf("    layer %d recovered_seed=0x%x match=%v\n", i, extracted.Layers[i].LayerSeed, match)
+		if !match {
+			weightsToSeedOK = false
+		}
+	}
+
+	jsonBytes, err := poly.MarshalMHAManifest(manifest)
+	if err != nil {
+		fmt.Printf("  FAIL marshal: %v\n", err)
+		return false
+	}
+	parsed, err := poly.ParseMHAManifest(jsonBytes)
+	if err != nil {
+		fmt.Printf("  FAIL parse: %v\n", err)
+		return false
+	}
+	_, err = poly.RebuildMHAManifest(parsed)
+	jsonOK := err == nil
+	fmt.Printf("  JSON manifest (%d bytes) seeds-only round trip: %v\n", len(jsonBytes), jsonOK)
+
+	ok := seedWeightsOK && forwardOK && weightsToSeedOK && jsonOK && extracted.ForwardFP == hashA
+	if ok {
+		fmt.Println("  MHA round trip OK")
+	} else {
+		fmt.Println("  MHA round trip FAIL")
+	}
+	return ok
+}
+
 func runPendingLayers() bool {
 	fmt.Println("\n══ Other layers / dtypes (coming next) ══")
-	pending := []string{"MHA", "RMSNorm", "RNN", "LSTM", "CNN", "Embedding", "21 dtypes"}
+	pending := []string{"RMSNorm", "RNN", "LSTM", "CNN", "Embedding", "21 dtypes"}
 	for _, name := range pending {
 		fmt.Printf("  [ ] %s round trip\n", name)
 	}
