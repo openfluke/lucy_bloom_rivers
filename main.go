@@ -42,6 +42,16 @@ func main() {
 		examples.RunContextSuiteAuto()
 		return
 	}
+	if os.Getenv("LOOM_SEED_POC") == "1" {
+		_ = os.Unsetenv("LOOM_SEED_POC")
+		examples.RunSeedPOCAuto()
+		return
+	}
+	if os.Getenv("LOOM_SEED_ROUNDTRIP") == "1" {
+		_ = os.Unsetenv("LOOM_SEED_ROUNDTRIP")
+		examples.RunSeedRoundTripAuto()
+		return
+	}
 	mode := readInput(reader, "\n[1] Poly Talk (HuggingFace cache)\n"+
 		"[2] Tests — dense mid-stream adaptation benchmark\n"+
 		"[3] Layer testing — CPU/GPU suites (optional save to "+lucytesting.DefaultOutputDir+")\n"+
@@ -59,6 +69,8 @@ func main() {
 		"[15] Cross-path CPU suite — SC/MC/SIMD vs native vs native-SIMD (→ "+lucytesting.DefaultOutputDir+"/cross_path_layers.txt)\n"+
 		"[16] Tween native suite — native SC vs native-SIMD target propagation (→ "+lucytesting.DefaultOutputDir+"/tween_native_layers.txt)\n"+
 		"[17] Adaptation suite — mid-stream task flip · all layers/dtypes/QAT/Nat/SIMD (→ "+lucytesting.DefaultOutputDir+"/adaptation_suite.txt)\n"+
+		"[18] Seed topology POC — recipe seeds from shape only (dense + transformer)\n"+
+		"[19] Seed round trip — dense weights↔seeds first · all layers/dtypes next\n"+
 		"Choice [1]: ", "1")
 	switch strings.TrimSpace(mode) {
 	case "2":
@@ -94,6 +106,10 @@ func main() {
 		examples.RunTweenNativeMenu(reader)
 	case "17":
 		examples.RunAdaptationMenu(reader)
+	case "18":
+		examples.RunSeedPOCMenu(reader)
+	case "19":
+		examples.RunSeedRoundTripMenu(reader)
 	default:
 		runHuggingFaceMode(reader)
 	}
