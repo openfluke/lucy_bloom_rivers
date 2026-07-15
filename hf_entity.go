@@ -25,6 +25,7 @@ type entityCatalogEntry struct {
 	EntityBytes        int64
 	HFSafetensorsBytes int64
 	StoredDType        poly.DType
+	HasLMHeadQ4        bool // baked transformer.lm_head.q4_0
 	Converted          bool
 }
 
@@ -159,10 +160,12 @@ func refreshEntityFileStats(e *entityCatalogEntry) {
 		if err == nil {
 			e.StoredDType = dt
 		}
+		e.HasLMHeadQ4 = poly.EntityHasLMHeadQ4(e.EntityPath)
 	} else {
 		e.EntityExists = false
 		e.EntityBytes = 0
 		e.StoredDType = 0
+		e.HasLMHeadQ4 = false
 	}
 }
 
@@ -192,13 +195,18 @@ func buildEntityCatalog(hubDir string, models []string) []entityCatalogEntry {
 
 func printEntityCatalog(title string, entries []entityCatalogEntry) {
 	fmt.Println(title)
-	fmt.Printf("  Folder: %s/  (decoder quant is baked into each .entity at convert time)\n\n", lucyEntitiesDir)
-	fmt.Printf("  %-4s  %-34s  %-18s  %-8s  %s\n", "#", "Model", "Support", ".entity", "HF → .entity")
-	fmt.Println("  " + strings.Repeat("─", 108))
+	fmt.Printf("  Folder: %s/  (decoder quant baked at convert; +H = baked Q4 LM head)\n\n", lucyEntitiesDir)
+	fmt.Printf("  %-4s  %-34s  %-18s  %-12s  %s\n", "#", "Model", "Support", ".entity", "HF → .entity")
+	fmt.Println("  " + strings.Repeat("─", 112))
 	for i, e := range entries {
 		entityCol := "missing"
 		if e.EntityExists {
 			entityCol = entityDTypeLabel(e.StoredDType)
+			if e.StoredDType == poly.DTypeInt4 && !e.HasLMHeadQ4 && !isBitNetEntityModel(e.ModelID) {
+				entityCol += "*" // needs reconvert for baked LM-head Q4
+			} else if e.HasLMHeadQ4 {
+				entityCol += "+H"
+			}
 		}
 		if e.Converted {
 			entityCol = "new " + entityCol
@@ -207,7 +215,7 @@ func printEntityCatalog(title string, entries []entityCatalogEntry) {
 		if !e.EntityExists && e.HFSafetensorsBytes > 0 {
 			sizeCol = formatBytes(e.HFSafetensorsBytes) + " → —"
 		}
-		fmt.Printf("  [%2d]  %-34s  %-18s  %-8s  %s\n",
+		fmt.Printf("  [%2d]  %-34s  %-18s  %-12s  %s\n",
 			i+1, truncateStr(e.ModelID, 34), truncateStr(e.Reason, 18), entityCol, sizeCol)
 	}
 	fmt.Println()
@@ -306,10 +314,16 @@ func promptEntityConversion(reader *bufio.Reader, entries []entityCatalogEntry) 
 	fmt.Println("\n🔧 Convert HF → .entity (pick models, quant baked in at save):")
 	fmt.Println("  [0] Skip — chat with existing .entity only")
 	fmt.Println("  [a] Convert all missing (supported, in cache)")
+	fmt.Println("  [q] Upgrade all Q4 .entity missing baked LM-head Q4 (+H) — force reconvert")
 	for i, e := range convertible {
 		status := "missing"
 		if e.EntityExists {
 			status = entityDTypeLabel(e.StoredDType) + " on disk"
+			if e.StoredDType == poly.DTypeInt4 && !e.HasLMHeadQ4 {
+				status += " (no LM-head Q4 — pick [q] or force)"
+			} else if e.HasLMHeadQ4 {
+				status += " +H"
+			}
 		}
 		fmt.Printf("  [%d] %s  (%s)\n", i+1, e.ModelID, status)
 	}
@@ -320,9 +334,17 @@ func promptEntityConversion(reader *bufio.Reader, entries []entityCatalogEntry) 
 		return
 	}
 
-	quantInput := readInput(reader, "💎 Save quant in .entity? (4=Q4 recommended / 32=FP32 / 8=INT8 native / bitnet=BitNet ternary) [4]: ", "4")
-	convertDType := parseConvertDTypeInput(quantInput)
-	force := readInput(reader, "♻️  Force reconvert (delete existing .entity for selected)? (1=yes / 0=no) [0]: ", "0") == "1"
+	var convertDType poly.DType
+	var force bool
+	if strings.EqualFold(choice, "q") {
+		convertDType = poly.DTypeInt4
+		force = true
+		fmt.Println("💎 Upgrade mode: Q4 (INT4) + bake LM-head Q4; force reconvert on.")
+	} else {
+		quantInput := readInput(reader, "💎 Save quant in .entity? (4=Q4 recommended / 32=FP32 / 8=INT8 native / bitnet=BitNet ternary) [4]: ", "4")
+		convertDType = parseConvertDTypeInput(quantInput)
+		force = readInput(reader, "♻️  Force reconvert (delete existing .entity for selected)? (1=yes / 0=no) [0]: ", "0") == "1"
+	}
 
 	var picks []*entityCatalogEntry
 	if strings.EqualFold(choice, "a") {
@@ -333,6 +355,19 @@ func promptEntityConversion(reader *bufio.Reader, entries []entityCatalogEntry) 
 				}
 			}
 		}
+	} else if strings.EqualFold(choice, "q") {
+		for i := range entries {
+			e := &entries[i]
+			if !e.Supported || e.SnapshotDir == "" || isBitNetEntityModel(e.ModelID) {
+				continue
+			}
+			if e.EntityExists && e.StoredDType == poly.DTypeInt4 && !e.HasLMHeadQ4 {
+				picks = append(picks, e)
+			} else if !e.EntityExists {
+				picks = append(picks, e)
+			}
+		}
+		fmt.Printf("   Upgrading/converting %d model(s) with Q4 + baked LM-head…\n", len(picks))
 	} else {
 		for _, part := range strings.Split(choice, ",") {
 			part = strings.TrimSpace(part)
@@ -381,7 +416,7 @@ func readEntityTalkLaunchOptions(reader *bufio.Reader, modelID string, storedDTy
 
 	if !cfg.useGPU {
 		if poly.Plan9SimdEnabled() {
-			cfg.useSIMD = readInput(reader, "⚡ CPU SIMD forward? (Plan 9 AVX2/NEON — Dense/SwiGLU/MHA/CNN/RNN/LSTM) (1=on / 0=off) [0]: ", "0") == "1"
+			cfg.useSIMD = readInput(reader, "⚡ CPU SIMD forward? (Plan 9 AVX2/NEON — Dense/SwiGLU/MHA + fused Q4 GEMV) (1=on / 0=off) [1]: ", "1") == "1"
 		} else {
 			fmt.Println("⚡ CPU SIMD forward: not linked for this build/arch — using scalar tiled forward.")
 		}
@@ -532,6 +567,9 @@ func runEntityTalkMode(reader *bufio.Reader) {
 		numLayers:         numLayers,
 		hiddenSize:        hiddenSize,
 		isQwen:            isQwen,
+		useBitNetCPU:      launch.useBitNetCPU,
+		useTernaryPTQCPU:  launch.useTernaryPTQCPU,
+		usePackedQ4CPU:    launch.usePackedQ4CPU || (!launch.useGPU && storedDType == poly.DTypeInt4),
 		rmsNormEps:        rmsNormEps,
 		fromEntity:        true,
 		entityFile:        ef,
@@ -543,9 +581,17 @@ func runEntityTalkMode(reader *bufio.Reader) {
 
 	if !useGPU && tr.Network != nil {
 		tr.Network.SetSimdForwardRecursive(launch.useSIMD)
-		if launch.useSIMD {
+		packedQ4 := tr.Network.UsePackedQ4CPU || storedDType == poly.DTypeInt4
+		switch {
+		case launch.useSIMD && packedQ4:
+			fmt.Println("⚡ CPU SIMD forward: ON (fused Q4 AVX2/NEON + Q4 LM head — no FP32 Master inflate)")
+		case launch.useSIMD && (launch.useBitNetCPU || launch.useBitNetPacked):
+			fmt.Println("⚡ CPU SIMD forward: ON (BitNet packed ternary + Plan 9 SIMD)")
+		case launch.useSIMD:
 			fmt.Println("⚡ CPU SIMD forward: ON (Plan 9 AVX2/NEON)")
-		} else {
+		case packedQ4:
+			fmt.Println("⚡ CPU SIMD forward: OFF (packed Q4 scalar fused — host stays small)")
+		default:
 			fmt.Println("⚡ CPU SIMD forward: OFF (scalar tiled)")
 		}
 	}

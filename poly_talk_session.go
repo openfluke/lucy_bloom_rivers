@@ -23,6 +23,7 @@ type polyTalkLaunch struct {
 	useBitNetGPU      bool
 	useTernaryPTQCPU  bool
 	useBitNetPacked   bool
+	usePackedQ4CPU    bool // ENTITY Int4: keep Q4 packed, no FP32 Master inflate
 }
 
 func readPolyTalkLaunchOptions(reader *bufio.Reader) polyTalkLaunch {
@@ -104,7 +105,12 @@ func applyModelSpecificLaunchOptions(reader *bufio.Reader, modelName string, cfg
 		}
 	} else if !cfg.useGPU {
 		if entityStoredDType == poly.DTypeInt4 {
-			fmt.Println("🧮 CPU: baked Q4_0 .entity — dequantizing to FP32 for tiled forward.")
+			if cfg.useSIMD {
+				fmt.Println("🧮 CPU: baked Q4_0 .entity — fused Q4 GEMV + SIMD (no FP32 inflate).")
+			} else {
+				fmt.Println("🧮 CPU: baked Q4_0 .entity — packed Q4 matmul (no FP32 inflate).")
+			}
+			cfg.usePackedQ4CPU = true
 		} else {
 			quantInput := readInput(reader, "🧮 CPU weight precision? (32=FP32 / ternary=experimental PTQ) [32]: ", "32")
 			switch strings.ToLower(strings.TrimSpace(quantInput)) {

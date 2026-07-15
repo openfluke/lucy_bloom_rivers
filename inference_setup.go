@@ -19,6 +19,7 @@ type inferenceConfig struct {
 	isQwen            bool
 	useBitNetCPU      bool
 	useTernaryPTQCPU  bool
+	usePackedQ4CPU    bool
 	rmsNormEps        float64
 	fromEntity        bool
 	entityFile        *poly.EntityFile
@@ -212,6 +213,10 @@ func setupTransformerForInference(tr *poly.Transformer[float32], cfg inferenceCo
 		applyGlitchTilingFlags(tr.Network, false, cfg.useTiling, cfg.tilingMode)
 		if cfg.useBitNetCPU || cfg.useTernaryPTQCPU || (cfg.fromEntity && cfg.weightDType == poly.DTypeTernary) {
 			tr.Network.UseExactDType = true
+		}
+		if cfg.usePackedQ4CPU || (cfg.fromEntity && cfg.weightDType == poly.DTypeInt4) {
+			tr.Network.UsePackedQ4CPU = true
+			cfg.usePackedQ4CPU = true
 		}
 		if trackMemory {
 			recordMemoryHistory("cpu_sync_before")
