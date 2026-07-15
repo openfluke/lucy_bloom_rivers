@@ -214,9 +214,8 @@ func setupTransformerForInference(tr *poly.Transformer[float32], cfg inferenceCo
 		if cfg.useBitNetCPU || cfg.useTernaryPTQCPU || (cfg.fromEntity && cfg.weightDType == poly.DTypeTernary) {
 			tr.Network.UseExactDType = true
 		}
-		if cfg.usePackedQ4CPU || (cfg.fromEntity && cfg.weightDType == poly.DTypeInt4) {
+		if cfg.usePackedQ4CPU {
 			tr.Network.UsePackedQ4CPU = true
-			cfg.usePackedQ4CPU = true
 		}
 		if trackMemory {
 			recordMemoryHistory("cpu_sync_before")

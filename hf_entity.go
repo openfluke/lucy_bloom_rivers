@@ -420,6 +420,16 @@ func readEntityTalkLaunchOptions(reader *bufio.Reader, modelID string, storedDTy
 		} else {
 			fmt.Println("⚡ CPU SIMD forward: not linked for this build/arch — using scalar tiled forward.")
 		}
+		if storedDType == poly.DTypeInt4 {
+			// Packed = small RAM / "real" Q4. Inflate = FP32 Master + classic NEON (often faster on Apple silicon; also a correctness fallback).
+			packed := readInput(reader, "📦 Keep Q4 packed (no FP32 inflate)? (1=packed / 0=inflate FP32 for speed) [1]: ", "1") == "1"
+			cfg.usePackedQ4CPU = packed
+			if packed {
+				fmt.Println("🧮 Q4 mode: packed GEMV (host stays small).")
+			} else {
+				fmt.Println("🧮 Q4 mode: inflate FP32 Master then SIMD/tiled (uses more RAM; often faster on Mac).")
+			}
+		}
 	}
 
 	fmt.Println("\n🚀 Tiling mode:")
@@ -569,7 +579,7 @@ func runEntityTalkMode(reader *bufio.Reader) {
 		isQwen:            isQwen,
 		useBitNetCPU:      launch.useBitNetCPU,
 		useTernaryPTQCPU:  launch.useTernaryPTQCPU,
-		usePackedQ4CPU:    launch.usePackedQ4CPU || (!launch.useGPU && storedDType == poly.DTypeInt4),
+		usePackedQ4CPU:    launch.usePackedQ4CPU,
 		rmsNormEps:        rmsNormEps,
 		fromEntity:        true,
 		entityFile:        ef,
@@ -581,10 +591,10 @@ func runEntityTalkMode(reader *bufio.Reader) {
 
 	if !useGPU && tr.Network != nil {
 		tr.Network.SetSimdForwardRecursive(launch.useSIMD)
-		packedQ4 := tr.Network.UsePackedQ4CPU || storedDType == poly.DTypeInt4
+		packedQ4 := tr.Network.UsePackedQ4CPU
 		switch {
 		case launch.useSIMD && packedQ4:
-			fmt.Println("⚡ CPU SIMD forward: ON (fused Q4 AVX2/NEON + Q4 LM head — no FP32 Master inflate)")
+			fmt.Println("⚡ CPU SIMD forward: ON (fused Q4 — AVX2 on amd64; NEON DotTile×32 unpack on arm64; + Q4 LM head)")
 		case launch.useSIMD && (launch.useBitNetCPU || launch.useBitNetPacked):
 			fmt.Println("⚡ CPU SIMD forward: ON (BitNet packed ternary + Plan 9 SIMD)")
 		case launch.useSIMD:

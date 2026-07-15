@@ -105,12 +105,15 @@ func applyModelSpecificLaunchOptions(reader *bufio.Reader, modelName string, cfg
 		}
 	} else if !cfg.useGPU {
 		if entityStoredDType == poly.DTypeInt4 {
-			if cfg.useSIMD {
-				fmt.Println("🧮 CPU: baked Q4_0 .entity — fused Q4 GEMV + SIMD (no FP32 inflate).")
+			if cfg.usePackedQ4CPU {
+				if cfg.useSIMD {
+					fmt.Println("🧮 CPU: baked Q4_0 .entity — fused Q4 GEMV + SIMD (no FP32 inflate).")
+				} else {
+					fmt.Println("🧮 CPU: baked Q4_0 .entity — packed Q4 matmul (no FP32 inflate).")
+				}
 			} else {
-				fmt.Println("🧮 CPU: baked Q4_0 .entity — packed Q4 matmul (no FP32 inflate).")
+				fmt.Println("🧮 CPU: baked Q4_0 .entity — will Materialize → FP32 Master (inflate path).")
 			}
-			cfg.usePackedQ4CPU = true
 		} else {
 			quantInput := readInput(reader, "🧮 CPU weight precision? (32=FP32 / ternary=experimental PTQ) [32]: ", "32")
 			switch strings.ToLower(strings.TrimSpace(quantInput)) {
