@@ -439,6 +439,16 @@ func readEntityTalkLaunchOptions(reader *bufio.Reader, modelID string, storedDTy
 	cfg.tilingMode, cfg.tileSize = parseLLMExecutionMode(execModeInput)
 
 	if cfg.useGPU {
+		// BitNet 128k×2560 FP32 LM head: host TopK MapAsync every token kills tok/s.
+		greedyDefault := "0"
+		greedyHint := "recommended for chat"
+		if storedDType == poly.DTypeTernary {
+			greedyDefault = "1"
+			greedyHint = "recommended for BitNet speed"
+		}
+		cfg.gpuSampleGreedy = readInput(reader,
+			fmt.Sprintf("⚡ Fast greedy GPU decode? (1=on-device ArgMax / 0=host TopK+masks, %s) [%s]: ", greedyHint, greedyDefault),
+			greedyDefault) == "1"
 		cfg.sequentialGPULoad = readInput(reader, "📥 Block-by-block GPU upload? (1=yes / 0=no) [1]: ", "1") == "1"
 	}
 	cfg.measureMemoryLoad = promptMeasureMemoryDuringLoad(reader)

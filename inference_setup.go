@@ -55,7 +55,9 @@ func loadEntityDecoderBlocks(tr *poly.Transformer[float32], cfg inferenceConfig)
 }
 
 func normalizeInferenceConfig(cfg *inferenceConfig) {
-	if cfg.useGPU && cfg.useTiling && cfg.hiddenSize >= 1536 {
+	// Q4 dense tiling can destabilize large-hidden models; BitNet uses a separate
+	// packed-ternary reduce/decode path and must keep tiling for speed.
+	if cfg.useGPU && cfg.useTiling && cfg.hiddenSize >= 1536 && cfg.weightDType != poly.DTypeTernary {
 		fmt.Printf("⚠️  Large model detected (hidden=%d). Tiled GPU path can destabilize logits here; forcing Standard Forward.\n", cfg.hiddenSize)
 		cfg.useTiling = false
 		cfg.tilingMode = "1"

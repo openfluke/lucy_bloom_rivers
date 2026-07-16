@@ -184,7 +184,7 @@ func runHuggingFaceMode(reader *bufio.Reader) {
 	if strings.EqualFold(poly.HFConfigStringDefault(config, "hidden_act", ""), "relu2") {
 		activation = poly.ActivationReLU2
 	}
-	if useGPU && useTiling && hiddenSize >= 1536 {
+	if useGPU && useTiling && hiddenSize >= 1536 && weightDType != poly.DTypeTernary {
 		fmt.Printf("⚠️  Large model detected (hidden=%d). Tiled GPU path can destabilize logits here; forcing Standard Forward.\n", hiddenSize)
 		useTiling = false
 		tilingMode = "1"

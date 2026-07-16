@@ -24,6 +24,9 @@ type polyTalkLaunch struct {
 	useTernaryPTQCPU  bool
 	useBitNetPacked   bool
 	usePackedQ4CPU    bool // ENTITY Int4: keep Q4 packed, no FP32 Master inflate
+	// gpuSampleGreedy: ArgMax on GPU (4-byte sync). Fastest decode; skips host
+	// top-k / repetition masks. Fused compute-pass is always on for GPU frames.
+	gpuSampleGreedy bool
 }
 
 func readPolyTalkLaunchOptions(reader *bufio.Reader) polyTalkLaunch {
@@ -68,6 +71,8 @@ func readPolyTalkLaunchOptions(reader *bufio.Reader) polyTalkLaunch {
 			cfg.weightDType = poly.DTypeInt4
 		}
 		weightDType = cfg.weightDType
+		cfg.gpuSampleGreedy = readInput(reader,
+			"⚡ Fast greedy GPU decode? (1=on-device ArgMax / 0=host TopK+masks, recommended for chat) [0]: ", "0") == "1"
 	}
 
 	if cfg.useGPU {
@@ -88,7 +93,10 @@ func applyModelSpecificLaunchOptions(reader *bufio.Reader, modelName string, cfg
 			cfg.useBitNetGPU = true
 			cfg.weightDType = poly.DTypeTernary
 			weightDType = poly.DTypeTernary
-			fmt.Println("🧪 BitNet model detected; enabling experimental WebGPU packed ternary inference.")
+			fmt.Println("🧪 BitNet WebGPU: packed ternary decode (Microsoft-style int8×ternary; FP32 tied emb/LM head).")
+			if !cfg.gpuSampleGreedy {
+				fmt.Println("   ⚠️  Host TopK will MapAsync ~128k logits/token — slow on BitNet-2B; prefer greedy=1 next launch.")
+			}
 		} else {
 			cfg.useBitNetCPU = true
 			fmt.Println("🧮 BitNet model detected; enabling CPU packed ternary inference.")
@@ -152,7 +160,10 @@ func runPolyTalkChatSession(reader *bufio.Reader, modelName string, numLayers in
 
 	configureCPUForwardMode(reader, tr, useGPU)
 
-	maxTokensLocal := 2048
+	// Interactive chat: short replies. Missed <|im_end|> used to dump thousands
+	// of tokens; long replies also poison the next prompt. Cap hard.
+	maxTokensLocal := 160
+	maxPromptTokens := 512
 	modelNameLower := strings.ToLower(modelName)
 	if strings.Contains(modelNameLower, "bitnet") || strings.Contains(modelNameLower, "1bit") {
 		maxTokensLocal = 192
@@ -209,6 +220,18 @@ func runPolyTalkChatSession(reader *bufio.Reader, modelName string, numLayers in
 		LayerTraceMaxTokens:   layerTraceMaxTokens,
 		LayerTracePrefill:     layerTracePrefill,
 		RepeatDecoderBlock:    repeatDecoderBlock,
+		GPUSampleGreedy:       useGPU && cfg.gpuSampleGreedy && !layerTrace,
+	}
+	if useGPU {
+		fmt.Println("🚀 WebGPU: fused single compute-pass per token (all quants / approved models)")
+		if opts.GPUSampleGreedy {
+			// Pure ArgMax ignores Temperature/TopK — force greedy-safe sampling knobs.
+			opts.Temperature = 0
+			opts.TopK = 1
+			opts.Deterministic = true
+			fmt.Println("⚡ Fast greedy GPU decode: ON (ArgMax on device; temp/TopK forced to greedy)")
+			fmt.Println("   Host n-gram / consecutive-repeat stops still apply on mapped tokens")
+		}
 	}
 	if layerTrace {
 		opts.Silent = true
@@ -236,17 +259,47 @@ func runPolyTalkChatSession(reader *bufio.Reader, modelName string, numLayers in
 			break
 		}
 
+		chatTurns = trimChatTurnsForPrompt(chatTurns, tr.Template, activeSystemPrompt, userMsg, encode, maxPromptTokens)
+
 		fmt.Print("GlitchBot: ")
 		reply, _ := tr.Generate(encode, decode, chatTurns, activeSystemPrompt, userMsg, opts)
+		reply = poly.SanitizeChatReply(reply)
 		if layerTrace {
 			fmt.Printf("\n(decoded) %s\n", reply)
 		} else {
 			fmt.Println()
 		}
 
+		// Never feed token-salad back into history — that was the multi-turn killer.
+		if reply == "" || poly.ReplyLooksDegenerate(reply) {
+			fmt.Println("(reply dropped from history — looked degenerate)")
+			continue
+		}
 		chatTurns = append(chatTurns, poly.Turn{
 			User:      userMsg,
 			Assistant: reply,
 		})
 	}
+}
+
+// trimChatTurnsForPrompt drops oldest turns until the rebuilt prompt fits maxToks.
+func trimChatTurnsForPrompt(
+	turns []poly.Turn,
+	tmpl poly.Template,
+	system, userMsg string,
+	encode func(string) []uint32,
+	maxToks int,
+) []poly.Turn {
+	if maxToks <= 0 || len(turns) == 0 {
+		return turns
+	}
+	for len(turns) > 0 {
+		prompt := tmpl.BuildPrompt(turns, system, userMsg)
+		if len(encode(prompt)) <= maxToks {
+			return turns
+		}
+		turns = turns[1:]
+		fmt.Println("(trimmed oldest chat turn to keep prompt under context budget)")
+	}
+	return turns
 }
